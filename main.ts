@@ -1,134 +1,171 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import moment from 'moment';
+import { Plugin, TAbstractFile, View, WorkspaceLeaf, setIcon } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
-}
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class DailyNavigatorPlugin extends Plugin {
 
 	async onload() {
-		await this.loadSettings();
+		this.registerEvent(
+			this.app.workspace.on('layout-change', () => {
+				const activeLeaf = this.app.workspace.getActiveViewOfType(View);
+				if (!activeLeaf) {
+					return;
+				}
+				this.addButtonsToLeaf(activeLeaf.leaf);
+			})
+		);
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', (leaf: WorkspaceLeaf) => {
+				this.addButtonsToLeaf(leaf);
+			})
+		)
+		this.addButtonsToAllLeaves();
+	}
+
+	addButtonsToAllLeaves() {
+		this.app.workspace.iterateAllLeaves((leaf) => this.addButtonsToLeaf(leaf));
+	}
+
+	getDailyNotePlugin() {
+		// @ts-ignore
+		let plugins = this.app.internalPlugins;
+		if (!plugins) return null;
+		let daily_note_plugin = plugins.getPluginById("daily-notes");
+		if (daily_note_plugin && daily_note_plugin.enabled) {
+			return daily_note_plugin
+		}
+		return null
+	}
+
+	getDailyNoteFolder() {
+		let daily_note_plugin = this.getDailyNotePlugin();
+		if (daily_note_plugin) {
+			return daily_note_plugin.instance.options.folder
+		}
+	}
+
+	getDailyNoteFormat() {
+		let daily_note_plugin = this.getDailyNotePlugin();
+		if (daily_note_plugin) {
+			return daily_note_plugin.instance.options.format
+		}
+	}
+
+	isFileDailyNote(file: TAbstractFile) {
+		let daily_note_folder = this.getDailyNoteFolder();
+		let file_in_daily_folder = file.path.startsWith(daily_note_folder);
+		let format_path = file.path.replace(daily_note_folder + "/", "").replace(".md", "");
+		let moment_obj = moment(format_path, this.getDailyNoteFormat(), true);
+		let file_is_daily_format = moment_obj.isValid();
+		return file_in_daily_folder && file_is_daily_format
+	}
+
+	handleNav(evt: Event, target: String, leaf: WorkspaceLeaf) {
+		let [prev_note, next_note] = this.getPrevAndNextDailyNotes();
+		if (target === "next" && next_note) {
+			leaf.openFile(next_note);
+		} else if (target === "prev" && prev_note) {
+			leaf.openFile(prev_note);
+		}
+	}
+
+	getPrevAndNextDailyNotes() {
+		let current_file = this.app.workspace.getActiveFile();
+		if (!current_file) return [null, null];
+
+		let prev_note = null;
+		let next_note = null;
+		let daily_notes = this.app.vault.getFiles().filter(file => this.isFileDailyNote(file));
+
+		daily_notes.sort((a, b) => {
+			if (a.path === b.path) return 0;
+			return a.path > b.path ? -1 : 1
 		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		let current_index = daily_notes.indexOf(current_file);
+		if (current_index !== -1 && daily_notes[current_index - 1]) {
+			next_note = daily_notes[current_index - 1];
+		}
+		if (current_index !== -1 && daily_notes[current_index + 1]) {
+			prev_note = daily_notes[current_index + 1];
+		}
+		return [prev_note, next_note]
+	}
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+	addButtonsToLeaf(leaf: WorkspaceLeaf) {
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+		if (leaf.view.getViewType() !== "markdown") return;
+
+		let file = this.app.workspace.getActiveFile();
+		if (!file) return;
+
+		let header = leaf.view.containerEl.getElementsByClassName("view-header")[0];
+
+		if (!header || !header.parentElement) return;
+
+		let subheader_els = header.parentElement.querySelectorAll(".view-sub-header");
+		let is_daily_note = this.isFileDailyNote(file);
+		if (subheader_els.length >= 1 && !is_daily_note) {
+			subheader_els.forEach(el => el.remove())
+			return
+		}
+
+		let [prev_note, next_note] = this.getPrevAndNextDailyNotes();
+		if (subheader_els.length == 0 && is_daily_note) {
+			let subheader = document.createElement("div");
+			subheader.addClass("view-sub-header");
+
+			let prev_button = subheader.createEl("button", { cls: "clickable-icon", attr: { "id": "daily-note-prev-button" } });
+			let prev_icon = prev_button.createEl("span", { cls: "daily-note-nav-icon" })
+			setIcon(prev_icon, "left-arrow");
+			prev_button.createEl("span", { cls: "daily-note-button-text", text: (prev_note ? prev_note.basename : "First Note") });
+			subheader.appendChild(prev_button);
+
+			let next_button = subheader.createEl("button", { cls: "clickable-icon", attr: { "id": "daily-note-next-button" } });
+			next_button.createEl("span", { cls: "daily-note-button-text", text: (next_note ? next_note.basename : "First Note") });
+			subheader.appendChild(next_button);
+			let next_icon = next_button.createEl("span", { cls: "daily-note-nav-icon" });
+			setIcon(next_icon, "right-arrow");
+
+			subheader.appendChild(next_button);
+
+
+			next_button.addEventListener("click", (e) => { this.handleNav(e, "next", leaf) });
+			prev_button.addEventListener("click", (e) => { this.handleNav(e, "prev", leaf) });
+
+			header.insertAdjacentElement('afterend', subheader);
+		} else if (is_daily_note) {
+			let next_button = document.querySelector(".view-sub-header #daily-note-next-button");
+			let next_text = next_button?.querySelector(".daily-note-button-text");
+
+			let prev_button = document.querySelector(".view-sub-header #daily-note-prev-button");
+			let prev_text = prev_button?.querySelector(".daily-note-button-text");
+
+			if (prev_note && prev_button) {
+				prev_button.setAttribute("aria-disabled", "false");
+				if (prev_text) {
+					prev_text.textContent = prev_note.basename;
+				}
+			} else if (prev_button) {
+				prev_button.setAttribute("aria-disabled", "true");
+				if (prev_text) {
+					prev_text.textContent = "First Note";
 				}
 			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+			if (next_note && next_button) {
+				next_button.setAttribute("aria-disabled", "false");
+				if (next_text) {
+					next_text.textContent = next_note.basename;
+				}
+			} else if (next_button) {
+				next_button.setAttribute("aria-disabled", "true");
+				if (next_text) {
+					next_text.textContent = "Last Note";
+				}
+			}
+		}
 	}
 
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
 }

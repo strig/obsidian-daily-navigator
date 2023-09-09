@@ -1,8 +1,17 @@
-/*
-
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
-*/
+.view-sub-header {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 var(--size-4-3);
+}
+.view-sub-header button.clickable-icon {
+    --icon-size: var(--icon-xs);
+}
+.view-sub-header button.clickable-icon:not([aria-disabled='true']) {
+    cursor: pointer;
+}
+.view-sub-header button.clickable-icon[aria-disabled='true'] .daily-note-nav-icon {
+    display: none;
+}
+.daily-note-nav-icon {
+    display: flex;
+}
