@@ -111,7 +111,7 @@ export default class DailyNavigatorPlugin extends Plugin {
 			subheader_els.forEach(el => el.remove())
 			return
 		}
-
+		console.log(subheader_els);
 		let [prev_note, next_note] = this.getPrevAndNextDailyNotes();
 		if (subheader_els.length == 0 && is_daily_note) {
 			let subheader = document.createElement("div");
@@ -137,10 +137,11 @@ export default class DailyNavigatorPlugin extends Plugin {
 
 			header.insertAdjacentElement('afterend', subheader);
 		} else if (is_daily_note) {
-			let next_button = document.querySelector(".view-sub-header #daily-note-next-button");
+			const subheader = subheader_els[0];
+			let next_button = subheader.querySelector(".view-sub-header #daily-note-next-button");
 			let next_text = next_button?.querySelector(".daily-note-button-text");
 
-			let prev_button = document.querySelector(".view-sub-header #daily-note-prev-button");
+			let prev_button = subheader.querySelector(".view-sub-header #daily-note-prev-button");
 			let prev_text = prev_button?.querySelector(".daily-note-button-text");
 
 			if (prev_note && prev_button) {
